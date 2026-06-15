@@ -2,6 +2,11 @@ name: Build Arcanus OS ISO
 
 on:
   workflow_dispatch:
+    inputs:
+      iso_url:
+        description: 'Linux Mint ISO download URL (leave blank to use default)'
+        required: false
+        default: ''
   push:
     branches:
       - main
@@ -38,17 +43,44 @@ jobs:
       - name: Download Linux Mint 22 ISO
         run: |
           mkdir -p downloads
-          echo "📥 Downloading Linux Mint 22 Cinnamon (2GB)..."
-          wget -O downloads/linuxmint-22-cinnamon-64bit.iso \
-            "https://mirrors.layeronline.com/linuxmint/stable/22/linuxmint-22-cinnamon-64bit.iso" \
-            --progress=bar:force:noscroll
+          
+          # Try multiple mirrors
+          ISO_URL="${{ github.event.inputs.iso_url }}"
+          
+          if [ -z "$ISO_URL" ]; then
+            # Try primary mirror first
+            ISO_URL="https://mirror.math.princeton.edu/pub/linuxmint/stable/22/linuxmint-22-xfce-64bit.iso"
+          fi
+          
+          echo "📥 Downloading from: $ISO_URL"
+          
+          if ! wget -O downloads/linuxmint-22-64bit.iso "$ISO_URL" --progress=bar:force:noscroll --timeout=30; then
+            echo "⚠️  Primary mirror failed, trying alternate..."
+            wget -O downloads/linuxmint-22-64bit.iso \
+              "https://ftp.lip6.fr/pub/linux/distributions/linuxmint/stable/22/linuxmint-22-xfce-64bit.iso" \
+              --progress=bar:force:noscroll --timeout=30 || \
+            wget -O downloads/linuxmint-22-64bit.iso \
+              "https://linuxmint.com/downloads/linuxmint-22-xfce-64bit.iso" \
+              --progress=bar:force:noscroll --timeout=30
+          fi
+          
           ls -lh downloads/
 
       - name: Build Arcanus OS ISO
         run: |
           chmod +x scripts/remaster-iso.sh
           mkdir -p dist
-          sudo ./scripts/remaster-iso.sh downloads/linuxmint-22-cinnamon-64bit.iso dist/
+          
+          # Find the ISO file (should be linuxmint-22-64bit.iso)
+          ISO_FILE=$(ls downloads/*.iso 2>/dev/null | head -1)
+          
+          if [ -z "$ISO_FILE" ]; then
+            echo "❌ No ISO file found in downloads/"
+            exit 1
+          fi
+          
+          echo "🔧 Using ISO: $ISO_FILE"
+          sudo ./scripts/remaster-iso.sh "$ISO_FILE" dist/
 
       - name: Verify ISO
         run: |
@@ -70,7 +102,7 @@ jobs:
           body: |
             # Arcanus OS ${{ github.ref_name }}
             
-            **Linux Mint 22 Cinnamon** remastered with Arcanus branding.
+            **Linux Mint 22 XFCE** remastered with Arcanus branding.
             
             ## What's Included
             - Full Linux Mint 22 functionality

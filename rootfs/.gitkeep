@@ -1,0 +1,15 @@
+# Optional filesystem overlays
+# Place custom files here that should be added to the ISO root
+
+# Examples:
+# - Custom config files
+# - Pre-configured applications
+# - System tweaks
+
+# File structure should mirror root:
+# rootfs/
+# ├── etc/
+# ├── usr/
+# └── opt/
+
+# The build script will copy contents to ISO root

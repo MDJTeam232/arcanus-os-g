@@ -1,11 +1,13 @@
 [Icon Theme]
 Name=Arcanus
-Comment=Arcanus OS Icon Theme
-Inherits=Adwaita
-
+Comment=Arcanus OS Purple Visual Identity
+Inherits=Mint-Y-Purple,Adwaita,gnome,hicolor
 Directories=scalable/apps
 
 [scalable/apps]
 Size=256
-Type=Scalable
+Scale=1
+MinSize=16
+MaxSize=512
 Context=Applications
+Type=Scalable

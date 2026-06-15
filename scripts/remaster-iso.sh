@@ -1,187 +1,76 @@
 #!/bin/bash
-# Arcanus OS Remaster Script
-# Converts Linux Mint ISO to Arcanus OS branded ISO
-# Usage: ./remaster-iso.sh <input-iso> <output-dir>
+# ==============================================================================
+# ARCANUS OS IMAGE REMASTER ROUTINE (DEBIAN 12 SPECIALIZED)
+# ==============================================================================
+set -e
 
-set -euo pipefail
+# Arguments passed from Makefile: [1] Workspace, [2] Output Dir, [3] Arch
+WORKSPACE=$1
+OUTPUT_DIR=$2
+ARCH=$3
+ISO_NAME="arcanus-os-live-${ARCH}.iso"
 
-MINT_ISO="${1:?Missing ISO path}"
-OUTPUT_DIR="${2:-.dist}"
+# Paths
+BUILD_DIR="${WORKSPACE}/build_env"
+ISO_EXTRACT="${BUILD_DIR}/iso_root"
+SQUASH_EXTRACT="${BUILD_DIR}/squashfs_root"
 
-# Resolve BUILD_DIR absolutely
-BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WORK_DIR="${BUILD_DIR}/.work"
-BRANDING_DIR="${BUILD_DIR}/branding"
+# Colors
+PURPLE='\033[0;35m'; GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+log_info() { echo -e "${PURPLE}[⚙️ ARCANUS BUILD] $1${NC}"; }
+log_success() { echo -e "${GREEN}[🎉 SUCCESS] $1${NC}"; }
+log_error() { echo -e "${RED}[❌ FATAL ERROR] $1${NC}"; }
 
-# Make OUTPUT_DIR absolute
-if [[ "${OUTPUT_DIR}" != /* ]]; then
-    OUTPUT_DIR="${BUILD_DIR}/${OUTPUT_DIR#./}"
+if [ "$EUID" -ne 0 ]; then
+    log_error "This script must be executed with root permissions."
+    exit 1
 fi
 
-# Color output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+mkdir -p "$OUTPUT_DIR"
 
-log_info() { echo -e "${BLUE}ℹ${NC} $*"; }
-log_ok() { echo -e "${GREEN}✓${NC} $*"; }
-log_warn() { echo -e "${YELLOW}⚠${NC} $*"; }
-log_err() { echo -e "${RED}✗${NC} $*"; exit 1; }
+# PHASE 1: Asset Staging
+log_info "Staging customization assets into Chroot environment..."
 
-# Verify inputs
-[ -f "${MINT_ISO}" ] || log_err "ISO not found: ${MINT_ISO}"
-[ -d "${BRANDING_DIR}" ] || log_err "Branding directory not found: ${BRANDING_DIR}"
-mkdir -p "${OUTPUT_DIR}"
+# 1. Prepare branding folder inside the chroot
+mkdir -p "${SQUASH_EXTRACT}/tmp/arcanus-branding"
+cp "${WORKSPACE}/branding/arcanus-logo.png" "${SQUASH_EXTRACT}/tmp/arcanus-branding/" 2>/dev/null || true
+cp "${WORKSPACE}/branding/wallpaper.png" "${SQUASH_EXTRACT}/tmp/arcanus-branding/" 2>/dev/null || true
 
-# Check for required tools
-for cmd in xorriso unsquashfs mksquashfs rsync; do
-    command -v "${cmd}" >/dev/null 2>&1 || log_err "Required tool missing: ${cmd}"
-done
+# 2. Prepare Ledger tarball
+cp "${WORKSPACE}/branding/arcanus-ledger-linux.tar.gz" "${SQUASH_EXTRACT}/tmp/" 2>/dev/null || true
 
-# Cleanup function
-cleanup() {
-    if mountpoint -q "${WORK_DIR}/mnt" 2>/dev/null; then
-        sudo umount "${WORK_DIR}/mnt" || true
-    fi
-    sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
+# 3. Copy the customize script itself
+cp "${WORKSPACE}/scripts/customize.sh" "${SQUASH_EXTRACT}/tmp/customize.sh"
+chmod +x "${SQUASH_EXTRACT}/tmp/customize.sh"
+
+# PHASE 2: Chroot Environment
+log_info "Entering Chroot to execute customization..."
+for dir in dev dev/pts proc sys run; do mount --bind /"$dir" "$SQUASH_EXTRACT/$dir"; done
+
+# Execute customization script
+chroot "$SQUASH_EXTRACT" /bin/bash /tmp/customize.sh || {
+    log_error "Customization script failed."
+    for dir in run sys proc dev/pts dev; do umount "$SQUASH_EXTRACT/$dir"; done
+    exit 1
 }
 
-trap cleanup EXIT
+# Cleanup mounts
+for dir in run sys proc dev/pts dev; do umount "$SQUASH_EXTRACT/$dir"; done
 
-# Create work directory with absolute paths
-log_info "Setting up work environment..."
-sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
-sudo mkdir -p "${WORK_DIR}/mnt" "${WORK_DIR}/iso-root" "${WORK_DIR}/squashfs-root"
-sudo chmod 777 "${WORK_DIR}" "${WORK_DIR}/squashfs-root"
-log_ok "Work directory ready: ${WORK_DIR}"
+# PHASE 3: SquashFS
+log_info "Compressing SquashFS (XZ optimized)..."
+rm -f "${ISO_EXTRACT}/live/filesystem.squashfs"
+mksquashfs "$SQUASH_EXTRACT" "${ISO_EXTRACT}/live/filesystem.squashfs" \
+    -comp xz -b 1M -noappend -e boot tmp
 
-# Extract ISO using xorriso
-log_info "Extracting Linux Mint ISO..."
-if ! xorriso -osirrox on -indev "${MINT_ISO}" -extract / "${WORK_DIR}/iso-root" >/dev/null 2>&1; then
-    log_err "Failed to extract ISO with xorriso"
-fi
-chmod -R u+w "${WORK_DIR}/iso-root"
-log_ok "ISO extracted"
+# PHASE 4: ISO Compilation
+log_info "Generating bootable ISO: ${ISO_NAME}"
+xorriso -as mkisofs -r -V "ARCANUS_OS" \
+    -o "${OUTPUT_DIR}/${ISO_NAME}" \
+    -J -joliet-long \
+    -b isolinux/isolinux.bin \
+    -c isolinux/boot.cat \
+    -no-emul-boot -boot-load-size 4 -boot-info-table \
+    "$ISO_EXTRACT"
 
-# Find and extract squashfs filesystem
-log_info "Extracting filesystem..."
-cd "${WORK_DIR}/iso-root/casper"
-
-FSIMG=""
-if [ -f "filesystem.squashfs" ]; then
-    FSIMG="filesystem.squashfs"
-    log_info "Found filesystem: $FSIMG"
-elif [ -f "filesystem.cfs" ]; then
-    FSIMG="filesystem.cfs"
-    log_info "Found filesystem: $FSIMG"
-else
-    log_err "No filesystem image found. Available: $(ls -1 | tr '\n' ' ')"
-fi
-
-# Extract filesystem - remove directory first to avoid permission issues
-sudo rm -rf "${WORK_DIR}/squashfs-root"
-sudo mkdir -p "${WORK_DIR}/squashfs-root"
-sudo chmod 777 "${WORK_DIR}/squashfs-root"
-
-if ! sudo unsquashfs -f -d "${WORK_DIR}/squashfs-root" "$FSIMG" 2>&1; then
-    log_err "Failed to extract filesystem: $FSIMG"
-fi
-
-# Fix permissions
-sudo chown -R "$(id -u):$(id -g)" "${WORK_DIR}/squashfs-root" 2>/dev/null || sudo chmod -R 777 "${WORK_DIR}/squashfs-root"
-log_ok "Filesystem extracted"
-
-# Apply branding
-log_info "Applying Arcanus branding..."
-
-if [ -f "${BRANDING_DIR}/wallpaper.png" ]; then
-    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/backgrounds"
-    cp "${BRANDING_DIR}/wallpaper.png" "${WORK_DIR}/squashfs-root/usr/share/backgrounds/arcanus-wallpaper.png"
-    log_ok "Wallpaper installed"
-fi
-
-if [ -f "${BRANDING_DIR}/arcanus-logo.png" ]; then
-    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/pixmaps"
-    cp "${BRANDING_DIR}/arcanus-logo.png" "${WORK_DIR}/squashfs-root/usr/share/pixmaps/arcanus-logo.png"
-    log_ok "Logo installed"
-fi
-
-if [ -d "${BRANDING_DIR}/theme" ]; then
-    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/themes"
-    cp -r "${BRANDING_DIR}/theme" "${WORK_DIR}/squashfs-root/usr/share/themes/"
-    log_ok "Theme installed"
-fi
-
-log_info "Customizing boot environment..."
-tee "${WORK_DIR}/squashfs-root/etc/issue" > /dev/null << 'EOF'
-
- ╔═══════════════════════════════════════╗
- ║   ARCANUS OS – Secure Finance         ║
- ║   Based on Linux Mint 22 Cinnamon     ║
- ╚═══════════════════════════════════════╝
-
-EOF
-
-if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ] || [ -d "${BUILD_DIR}/arcanus-ledger" ]; then
-    log_info "Installing Arcanus Ledger..."
-    mkdir -p "${WORK_DIR}/squashfs-root/opt/arcanus-ledger"
-    
-    if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ]; then
-        tar -xzf "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" \
-            -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null || true
-    fi
-    
-    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/applications"
-    tee "${WORK_DIR}/squashfs-root/usr/share/applications/arcanus-ledger.desktop" > /dev/null << 'DESK'
-[Desktop Entry]
-Type=Application
-Name=Arcanus Ledger
-Comment=Secure Business Ledger & Finance Management
-Exec=/opt/arcanus-ledger/arcanus_ledger
-Icon=arcanus-logo
-Categories=Finance;Office;
-Terminal=false
-DESK
-    log_ok "Arcanus Ledger ready"
-else
-    log_warn "Arcanus Ledger not found (optional)"
-fi
-
-log_ok "Branding applied"
-
-# Repack squashfs
-log_info "Repacking filesystem..."
-cd "${WORK_DIR}/iso-root/casper"
-sudo rm -f "$FSIMG"
-sudo chown -R root:root "${WORK_DIR}/squashfs-root" 2>/dev/null || true
-
-if ! sudo mksquashfs "${WORK_DIR}/squashfs-root" "$FSIMG" \
-    -noappend -comp xz -b 1M -e proc sys dev run tmp 2>&1; then
-    log_err "Failed to repack filesystem"
-fi
-log_ok "Filesystem repacked"
-
-# Create ISO
-log_info "Creating Arcanus OS ISO..."
-cd "${BUILD_DIR}"
-
-if xorriso -indev "${MINT_ISO}" -outdev "${OUTPUT_DIR}/arcanus-os-demo.iso" \
-    -boot_image any replay -volid "ARCANUS_OS" \
-    -update_r "${WORK_DIR}/iso-root" / -commit >/dev/null 2>&1; then
-    log_ok "ISO created"
-else
-    log_warn "xorriso replay failed, trying fallback..."
-    mkisofs -iso-level 3 -r -V "ARCANUS_OS" -cache-inodes -J -l \
-        -b isolinux/isolinux.bin -c isolinux/boot.cat \
-        -no-emul-boot -boot-load-size 4 -boot-info-table \
-        -o "${OUTPUT_DIR}/arcanus-os-demo.iso" "${WORK_DIR}/iso-root" >/dev/null 2>&1 || log_err "ISO creation failed"
-    log_ok "ISO created (fallback)"
-fi
-
-echo ""
-echo "Build Complete!"
-echo ""
-ls -lh "${OUTPUT_DIR}/arcanus-os-demo.iso"
-log_ok "Ready to test"
+log_success "Artifact generated at: ${OUTPUT_DIR}/${ISO_NAME}"

@@ -67,10 +67,17 @@ if [ -f "${BRANDING_DIR}/arcanus-logo.png" ]; then
     log_ok "Logo installed"
 fi
 
-# Copy theme if exists
+# Copy icon theme if exists
+if [ -d "${BRANDING_DIR}/icon-theme" ]; then
+    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/icons/Arcanus"
+    sudo cp -r "${BRANDING_DIR}/icon-theme"/* "${WORK_DIR}/squashfs-root/usr/share/icons/Arcanus/"
+    log_ok "Icon theme installed"
+fi
+
+# Copy GTK theme if exists
 if [ -d "${BRANDING_DIR}/theme" ]; then
     sudo cp -r "${BRANDING_DIR}/theme" "${WORK_DIR}/squashfs-root/usr/share/themes/"
-    log_ok "Theme installed"
+    log_ok "GTK theme installed"
 fi
 
 # Update branding files

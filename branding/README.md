@@ -2,71 +2,89 @@
 
 This folder contains Arcanus visual identity assets used to customize the Linux Mint ISO.
 
-## Required Files
+## Available Assets
 
-### Logos
+### Icons (SVG)
+- **`arcanus-os.svg`** – Main OS logo/icon
+- **`ledger.svg`** – Arcanus Ledger app icon
+- **`vault.svg`** – Vault/security icon
+- **`intelligence.svg`** – AI/intelligence icon
+- **`knowledge.svg`** – Knowledge base icon
+- **`workspace.svg`** – Workspace icon
+- **`terminal.svg`** – Terminal icon
+- **`link.svg`** – Link/connection icon
 
-- **`arcanus-logo.png`** (256×256 px, RGBA)
-  - Used in menus, taskbar, application launcher
-  - Background should be transparent
-  - Save as PNG with transparency
+### Icon Theme
+- **`icon-theme/`** – Complete icon theme structure
+  - Inherits from Adwaita for missing icons
+  - Scalable SVG icons for all sizes
 
-- **`arcanus-logo-small.png`** (48×48 px, RGBA)
-  - Used in panel/taskbar icons
-  - Must be clear at small sizes
+## Adding to ISO
 
-### Wallpaper
+The build script automatically:
+1. Installs icon theme to `/usr/share/icons/Arcanus/`
+2. Sets Arcanus as default icon theme
+3. Uses `arcanus-os.svg` for app launchers and menus
 
-- **`wallpaper.png`** (1920×1080 px or higher)
-  - Desktop background for live environment
-  - PNG or JPG format
-  - Should match Arcanus color scheme (purples, dark backgrounds)
+## Required Files (for minimal build)
 
-### Optional Boot Assets
+Add these to complete the branding:
 
-- **`splash.png`** (1024×768 px)
-  - Boot screen splash image
-  - Appears during system startup
+- **`wallpaper.png`** (1920×1080 px)
+  - Desktop background
+  
+- **`splash.png`** (1024×768 px, optional)
+  - Boot screen
 
 ## Color Palette (Reference)
 
-Based on your Arcanus branding image:
-- **Primary:** Purple/Violet (#8B5CF6 or similar)
-- **Secondary:** Dark backgrounds (#0F0F1E or similar)
-- **Accent:** Cyan/Light blue highlights
+Based on your Arcanus branding:
+- **Primary:** Purple/Violet (#8B5CF6)
+- **Secondary:** Dark backgrounds (#0F0F1E)
+- **Accent:** Cyan/Light blue highlights (#06B6D4)
 
-## Placement in Repository
+## File Structure
 
 ```
 branding/
-├── arcanus-logo.png
-├── arcanus-logo-small.png
-├── wallpaper.png
-├── splash.png (optional)
-└── README.md (this file)
+├── arcanus-os.svg          ✓ (ready)
+├── ledger.svg              ✓ (ready)
+├── vault.svg               ✓ (ready)
+├── intelligence.svg        ✓ (ready)
+├── knowledge.svg           ✓ (ready)
+├── workspace.svg           ✓ (ready)
+├── terminal.svg            ✓ (ready)
+├── link.svg                ✓ (ready)
+├── icon-theme/             ✓ (ready)
+│   ├── index.theme
+│   └── scalable/apps/
+├── wallpaper.png           ← NEEDED
+├── splash.png              ← Optional
+└── README.md
 ```
 
-## Testing Your Assets
+## Testing Icons
 
-After adding files, verify:
+After building the ISO, icons appear in:
+- Application menu
+- Taskbar
+- File manager
+- System tray
+
+## Converting SVG to PNG
+
+If you need PNG versions for specific uses:
 
 ```bash
-make verify          # Check all files exist
-make remaster        # Build ISO with your assets
+# macOS
+for svg in *.svg; do
+    convert -density 300 "$svg" -resize 256x256 "${svg%.svg}.png"
+done
+
+# Or use ImageMagick
+sips -s format png arcanus-os.svg --out arcanus-os.png
 ```
 
-Then test the ISO in VirtualBox to see how your branding looks in the actual environment.
+---
 
-## Tips
-
-1. **High Resolution:** Use high-quality PNG/JPG; mkisofs will handle compression
-2. **Transparency:** Logos should have transparent backgrounds (not white/black)
-3. **Consistency:** Ensure color palette matches across all assets
-4. **Dark Theme:** Since Arcanus appears to use dark UI, choose appropriately-colored wallpapers
-5. **Testing:** Quick test in GIMP/Inkscape before building full ISO
-
-## Asset Sources
-
-Your existing branding materials:
-- From the Arcanus presentation image you shared (purple neon A logo)
-- Color scheme: dark purple backgrounds with bright purple/cyan accents
+Icons ready! Just add wallpaper.png to complete the branding package.

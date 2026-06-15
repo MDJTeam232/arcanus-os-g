@@ -1,0 +1,11 @@
+[Icon Theme]
+Name=Arcanus
+Comment=Arcanus OS Icon Theme
+Inherits=Adwaita
+
+Directories=scalable/apps
+
+[scalable/apps]
+Size=256
+Type=Scalable
+Context=Applications

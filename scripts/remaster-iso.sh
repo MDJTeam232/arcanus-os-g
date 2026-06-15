@@ -46,7 +46,9 @@ trap cleanup EXIT
 # Create work directory
 log_info "Setting up work environment..."
 sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
-mkdir -p "${WORK_DIR}"/{mnt,iso-root,squashfs-root}
+sudo mkdir -p "${WORK_DIR}"/{mnt,iso-root}
+sudo mkdir -p "${WORK_DIR}/squashfs-root"
+sudo chmod 777 "${WORK_DIR}" "${WORK_DIR}/squashfs-root"
 log_ok "Work directory ready"
 
 # Extract ISO using xorriso (more reliable than mount)
@@ -74,9 +76,13 @@ else
 fi
 
 # Extract with -f flag to force overwrite and show real errors
+# Let unsquashfs create the directory by removing it first
+sudo rm -rf "${WORK_DIR}/squashfs-root"
 if ! sudo unsquashfs -f -d "${WORK_DIR}/squashfs-root" "$FSIMG" 2>&1; then
     log_err "Failed to extract filesystem: $FSIMG"
 fi
+# Fix permissions so we can write to it
+sudo chown -R "$(id -u):$(id -g)" "${WORK_DIR}/squashfs-root" || sudo chmod -R 777 "${WORK_DIR}/squashfs-root"
 log_ok "Filesystem extracted"
 
 # Apply branding
@@ -84,28 +90,28 @@ log_info "Applying Arcanus branding..."
 
 # Copy wallpaper
 if [ -f "${BRANDING_DIR}/wallpaper.png" ]; then
-    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/backgrounds"
-    sudo cp "${BRANDING_DIR}/wallpaper.png" "${WORK_DIR}/squashfs-root/usr/share/backgrounds/arcanus-wallpaper.png"
+    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/backgrounds"
+    cp "${BRANDING_DIR}/wallpaper.png" "${WORK_DIR}/squashfs-root/usr/share/backgrounds/arcanus-wallpaper.png"
     log_ok "Wallpaper installed"
 fi
 
 # Copy logo
 if [ -f "${BRANDING_DIR}/arcanus-logo.png" ]; then
-    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/pixmaps"
-    sudo cp "${BRANDING_DIR}/arcanus-logo.png" "${WORK_DIR}/squashfs-root/usr/share/pixmaps/arcanus-logo.png"
+    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/pixmaps"
+    cp "${BRANDING_DIR}/arcanus-logo.png" "${WORK_DIR}/squashfs-root/usr/share/pixmaps/arcanus-logo.png"
     log_ok "Logo installed"
 fi
 
 # Copy theme if exists
 if [ -d "${BRANDING_DIR}/theme" ]; then
-    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/themes"
-    sudo cp -r "${BRANDING_DIR}/theme" "${WORK_DIR}/squashfs-root/usr/share/themes/"
+    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/themes"
+    cp -r "${BRANDING_DIR}/theme" "${WORK_DIR}/squashfs-root/usr/share/themes/"
     log_ok "Theme installed"
 fi
 
 # Update branding files
 log_info "Customizing boot environment..."
-sudo tee "${WORK_DIR}/squashfs-root/etc/issue" > /dev/null << 'EOF'
+tee "${WORK_DIR}/squashfs-root/etc/issue" > /dev/null << 'EOF'
 
  ╔═══════════════════════════════════════╗
  ║   ARCANUS OS – Secure Finance         ║
@@ -117,16 +123,16 @@ EOF
 # Create Arcanus Ledger desktop shortcut
 if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ] || [ -d "${BUILD_DIR}/arcanus-ledger" ]; then
     log_info "Installing Arcanus Ledger..."
-    sudo mkdir -p "${WORK_DIR}/squashfs-root/opt/arcanus-ledger"
+    mkdir -p "${WORK_DIR}/squashfs-root/opt/arcanus-ledger"
     
     if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ]; then
-        sudo tar -xzf "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" \
+        tar -xzf "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" \
             -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null || true
     fi
     
     # Desktop entry
-    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/applications"
-    sudo tee "${WORK_DIR}/squashfs-root/usr/share/applications/arcanus-ledger.desktop" > /dev/null << 'DESK'
+    mkdir -p "${WORK_DIR}/squashfs-root/usr/share/applications"
+    tee "${WORK_DIR}/squashfs-root/usr/share/applications/arcanus-ledger.desktop" > /dev/null << 'DESK'
 [Desktop Entry]
 Type=Application
 Name=Arcanus Ledger
@@ -147,6 +153,9 @@ log_ok "Branding applied"
 log_info "Repacking filesystem..."
 cd "${WORK_DIR}/iso-root/casper"
 sudo rm -f "$FSIMG"
+
+# Fix permissions before repacking - ensure root owns everything
+sudo chown -R root:root "${WORK_DIR}/squashfs-root" 2>/dev/null || true
 
 # Repack with proper exclusions
 if ! sudo mksquashfs "${WORK_DIR}/squashfs-root" "$FSIMG" \

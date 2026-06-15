@@ -41,24 +41,31 @@ log_ok "Work directory ready"
 
 # Mount and extract ISO
 log_info "Extracting Linux Mint ISO..."
-sudo mount -o loop,ro "${MINT_ISO}" "${WORK_DIR}/mnt" 2>/dev/null || log_err "Failed to mount ISO"
-log_ok "ISO mounted"
-
-# Copy ISO contents with rsync (simpler, more reliable)
-log_info "Copying ISO contents..."
-sudo rsync -a --exclude='*.squashfs' "${WORK_DIR}/mnt"/ "${WORK_DIR}/extracted/" >/dev/null 2>&1 || log_err "Failed to copy ISO"
-
+sudo mount -o loop "${MINT_ISO}" "${WORK_DIR}/mnt" || log_err "Failed to mount ISO"
+sudo rsync -avh "${WORK_DIR}/mnt"/ "${WORK_DIR}/extracted/" --exclude='*.squashfs' >/dev/null 2>&1
 sudo umount "${WORK_DIR}/mnt"
 log_ok "ISO extracted"
 
 # Extract squashfs
 log_info "Extracting filesystem..."
 cd "${WORK_DIR}/extracted/casper"
-sudo unsquashfs -d "${WORK_DIR}/squashfs-root" filesystem.squashfs >/dev/null 2>&1 || log_err "Failed to extract filesystem"
-log_ok "Filesystem extracted"
 
-# Fix permissions on squashfs-root
-sudo chmod -R u+w "${WORK_DIR}/squashfs-root"
+# Find the actual filesystem image
+FSIMG=""
+if [ -f "filesystem.squashfs" ]; then
+    FSIMG="filesystem.squashfs"
+elif [ -f "filesystem.cfs" ]; then
+    FSIMG="filesystem.cfs"
+else
+    # List available files for debugging
+    log_err "No filesystem image found. Available files: $(ls -1 | tr '\n' ' ')"
+fi
+
+# Extract with error checking
+if ! sudo unsquashfs -d "${WORK_DIR}/squashfs-root" "$FSIMG" 2>&1 | grep -v "^Parallel unsquashfs"; then
+    log_err "Failed to extract filesystem: $FSIMG"
+fi
+log_ok "Filesystem extracted"
 
 # Apply branding
 log_info "Applying Arcanus branding..."
@@ -75,17 +82,10 @@ if [ -f "${BRANDING_DIR}/arcanus-logo.png" ]; then
     log_ok "Logo installed"
 fi
 
-# Copy icon theme if exists
-if [ -d "${BRANDING_DIR}/icon-theme" ]; then
-    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/icons/Arcanus"
-    sudo cp -r "${BRANDING_DIR}/icon-theme"/* "${WORK_DIR}/squashfs-root/usr/share/icons/Arcanus/"
-    log_ok "Icon theme installed"
-fi
-
-# Copy GTK theme if exists
+# Copy theme if exists
 if [ -d "${BRANDING_DIR}/theme" ]; then
     sudo cp -r "${BRANDING_DIR}/theme" "${WORK_DIR}/squashfs-root/usr/share/themes/"
-    log_ok "GTK theme installed"
+    log_ok "Theme installed"
 fi
 
 # Update branding files
@@ -106,7 +106,7 @@ if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ] || [ -d "${BUILD_DIR}/
     
     if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ]; then
         sudo tar -xzf "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" \
-            -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null || true
+            -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null
     fi
     
     # Desktop entry
@@ -128,17 +128,19 @@ fi
 log_ok "Branding applied"
 
 # Repack filesystem
-log_info "Repacking filesystem (this may take 5-10 minutes)..."
+log_info "Repacking filesystem..."
 cd "${WORK_DIR}/extracted/casper"
-sudo rm -f filesystem.squashfs
-sudo mksquashfs "${WORK_DIR}/squashfs-root" filesystem.squashfs -comp xz -processors 1 >/dev/null 2>&1 || log_err "Failed to repack filesystem"
+sudo rm -f "$FSIMG"
+if ! sudo mksquashfs "${WORK_DIR}/squashfs-root" "$FSIMG" -comp xz 2>&1 | tail -1; then
+    log_err "Failed to repack filesystem"
+fi
 log_ok "Filesystem repacked"
 
 # Build ISO
 log_info "Creating Arcanus OS ISO..."
 cd "${BUILD_DIR}"
 
-sudo mkisofs -iso-level 3 \
+mkisofs -iso-level 3 \
     -r -V "ARCANUS_OS" \
     -cache-inodes -J -l \
     -b isolinux/isolinux.bin \
@@ -147,7 +149,7 @@ sudo mkisofs -iso-level 3 \
     -boot-load-size 4 \
     -boot-info-table \
     -o "${OUTPUT_DIR}/arcanus-os-demo.iso" \
-    "${WORK_DIR}/extracted" >/dev/null 2>&1 || log_err "Failed to create ISO"
+    "${WORK_DIR}/extracted" >/dev/null 2>&1
 
 log_ok "ISO created"
 
@@ -162,10 +164,6 @@ echo "╔═══════════════════════�
 echo "║  ✅ Arcanus OS Build Complete!         ║"
 echo "╚════════════════════════════════════════╝"
 echo ""
-if [ -f "${OUTPUT_DIR}/arcanus-os-demo.iso" ]; then
-    ls -lh "${OUTPUT_DIR}/arcanus-os-demo.iso"
-    echo ""
-    log_ok "Ready to test in VirtualBox/QEMU"
-else
-    log_err "ISO file not found at ${OUTPUT_DIR}/arcanus-os-demo.iso"
-fi
+ls -lh "${OUTPUT_DIR}/arcanus-os-demo.iso"
+echo ""
+log_ok "Ready to test in VirtualBox/QEMU"

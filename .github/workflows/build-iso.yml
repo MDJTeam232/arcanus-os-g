@@ -1,0 +1,88 @@
+name: Build Arcanus OS ISO
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'branding/**'
+      - 'theme/**'
+      - 'scripts/**'
+      - '.github/workflows/build-iso.yml'
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-iso:
+    name: Remaster Linux Mint with Arcanus Branding
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget \
+            squashfs-tools \
+            mkisofs \
+            xorriso \
+            rsync \
+            sudo
+
+      - name: Download Linux Mint 22 ISO
+        run: |
+          mkdir -p downloads
+          echo "📥 Downloading Linux Mint 22 Cinnamon (2GB)..."
+          wget -O downloads/linuxmint-22-cinnamon-64bit.iso \
+            "https://mirrors.layeronline.com/linuxmint/stable/22/linuxmint-22-cinnamon-64bit.iso" \
+            --progress=bar:force:noscroll
+          ls -lh downloads/
+
+      - name: Build Arcanus OS ISO
+        run: |
+          chmod +x scripts/remaster-iso.sh
+          mkdir -p dist
+          sudo ./scripts/remaster-iso.sh downloads/linuxmint-22-cinnamon-64bit.iso dist/
+
+      - name: Verify ISO
+        run: |
+          ls -lh dist/
+          file dist/arcanus-os-demo.iso
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arcanus-os-demo-iso
+          path: dist/arcanus-os-demo.iso
+          retention-days: 30
+
+      - name: Create release (on tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/arcanus-os-demo.iso
+          body: |
+            # Arcanus OS ${{ github.ref_name }}
+            
+            **Linux Mint 22 Cinnamon** remastered with Arcanus branding.
+            
+            ## What's Included
+            - Full Linux Mint 22 functionality
+            - Arcanus visual branding (logo, wallpaper, icons)
+            - Pre-installed Arcanus Ledger
+            - Ready to test in VirtualBox/QEMU
+            
+            ## Quick Test
+            ```bash
+            qemu-system-x86_64 -cdrom arcanus-os-demo.iso -m 4G -smp 2
+            ```
+            
+            ## Build Info
+            - Built: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+            - Commit: ${{ github.sha }}

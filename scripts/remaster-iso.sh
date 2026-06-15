@@ -1,106 +1,199 @@
-name: Build Arcanus OS ISO
+#!/bin/bash
+# Arcanus OS Remaster Script
+# Converts Linux Mint ISO to Arcanus OS branded ISO
+# Usage: ./remaster-iso.sh <input-iso> <output-dir>
 
-on:
-  workflow_dispatch:
-    inputs:
-      iso_url:
-        description: 'Linux Mint ISO download URL (optional)'
-        required: false
-        default: ''
-  push:
-    branches:
-      - main
-    paths:
-      - 'branding/**'
-      - 'theme/**'
-      - 'scripts/**'
-      - '.github/workflows/build-iso.yml'
+set -euo pipefail
 
-permissions:
-  contents: read
-  actions: write
+MINT_ISO="${1:?Missing argument: path to Linux Mint ISO}"
+OUTPUT_DIR="${2:-.dist}"
+WORK_DIR=".work"
+BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BRANDING_DIR="${BUILD_DIR}/branding"
 
-jobs:
-  build-iso:
-    name: Remaster Linux Mint with Arcanus Branding
-    runs-on: ubuntu-latest
+# Color output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log_info() { echo -e "${BLUE}ℹ${NC} $*"; }
+log_ok() { echo -e "${GREEN}✓${NC} $*"; }
+log_warn() { echo -e "${YELLOW}⚠${NC} $*"; }
+log_err() { echo -e "${RED}✗${NC} $*"; exit 1; }
+
+# Verify inputs
+[ -f "${MINT_ISO}" ] || log_err "ISO not found: ${MINT_ISO}"
+[ -d "${BRANDING_DIR}" ] || log_err "Branding directory not found: ${BRANDING_DIR}"
+mkdir -p "${OUTPUT_DIR}"
+
+# Check for required tools
+for cmd in xorriso unsquashfs mksquashfs rsync; do
+    command -v "${cmd}" >/dev/null 2>&1 || log_err "Required tool missing: ${cmd}"
+done
+
+# Cleanup function
+cleanup() {
+    if mountpoint -q "${WORK_DIR}/mnt" 2>/dev/null; then
+        sudo umount "${WORK_DIR}/mnt" || true
+    fi
+    sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
+# Create work directory
+log_info "Setting up work environment..."
+sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
+mkdir -p "${WORK_DIR}"/{mnt,iso-root,squashfs-root}
+log_ok "Work directory ready"
+
+# Extract ISO using xorriso (more reliable than mount)
+log_info "Extracting Linux Mint ISO..."
+if ! xorriso -osirrox on -indev "${MINT_ISO}" -extract / "${WORK_DIR}/iso-root" >/dev/null 2>&1; then
+    log_err "Failed to extract ISO with xorriso"
+fi
+chmod -R u+w "${WORK_DIR}/iso-root"
+log_ok "ISO extracted"
+
+# Find and extract squashfs filesystem
+log_info "Extracting filesystem..."
+cd "${WORK_DIR}/iso-root/casper"
+
+# Detect filesystem image
+FSIMG=""
+if [ -f "filesystem.squashfs" ]; then
+    FSIMG="filesystem.squashfs"
+    log_info "Found filesystem: $FSIMG"
+elif [ -f "filesystem.cfs" ]; then
+    FSIMG="filesystem.cfs"
+    log_info "Found filesystem: $FSIMG"
+else
+    log_err "No filesystem image found in casper/. Available: $(ls -1 | tr '\n' ' ')"
+fi
+
+# Extract with -f flag to force overwrite and show real errors
+if ! sudo unsquashfs -f -d "${WORK_DIR}/squashfs-root" "$FSIMG" 2>&1; then
+    log_err "Failed to extract filesystem: $FSIMG"
+fi
+log_ok "Filesystem extracted"
+
+# Apply branding
+log_info "Applying Arcanus branding..."
+
+# Copy wallpaper
+if [ -f "${BRANDING_DIR}/wallpaper.png" ]; then
+    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/backgrounds"
+    sudo cp "${BRANDING_DIR}/wallpaper.png" "${WORK_DIR}/squashfs-root/usr/share/backgrounds/arcanus-wallpaper.png"
+    log_ok "Wallpaper installed"
+fi
+
+# Copy logo
+if [ -f "${BRANDING_DIR}/arcanus-logo.png" ]; then
+    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/pixmaps"
+    sudo cp "${BRANDING_DIR}/arcanus-logo.png" "${WORK_DIR}/squashfs-root/usr/share/pixmaps/arcanus-logo.png"
+    log_ok "Logo installed"
+fi
+
+# Copy theme if exists
+if [ -d "${BRANDING_DIR}/theme" ]; then
+    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/themes"
+    sudo cp -r "${BRANDING_DIR}/theme" "${WORK_DIR}/squashfs-root/usr/share/themes/"
+    log_ok "Theme installed"
+fi
+
+# Update branding files
+log_info "Customizing boot environment..."
+sudo tee "${WORK_DIR}/squashfs-root/etc/issue" > /dev/null << 'EOF'
+
+ ╔═══════════════════════════════════════╗
+ ║   ARCANUS OS – Secure Finance         ║
+ ║   Based on Linux Mint 22 Cinnamon     ║
+ ╚═══════════════════════════════════════╝
+
+EOF
+
+# Create Arcanus Ledger desktop shortcut
+if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ] || [ -d "${BUILD_DIR}/arcanus-ledger" ]; then
+    log_info "Installing Arcanus Ledger..."
+    sudo mkdir -p "${WORK_DIR}/squashfs-root/opt/arcanus-ledger"
     
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ]; then
+        sudo tar -xzf "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" \
+            -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null || true
+    fi
+    
+    # Desktop entry
+    sudo mkdir -p "${WORK_DIR}/squashfs-root/usr/share/applications"
+    sudo tee "${WORK_DIR}/squashfs-root/usr/share/applications/arcanus-ledger.desktop" > /dev/null << 'DESK'
+[Desktop Entry]
+Type=Application
+Name=Arcanus Ledger
+Comment=Secure Business Ledger & Finance Management
+Exec=/opt/arcanus-ledger/arcanus_ledger
+Icon=arcanus-logo
+Categories=Finance;Office;
+Terminal=false
+DESK
+    log_ok "Arcanus Ledger ready"
+else
+    log_warn "Arcanus Ledger not found (optional)"
+fi
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            wget \
-            squashfs-tools \
-            xorriso \
-            rsync \
-            sudo
+log_ok "Branding applied"
 
-      - name: Download Linux Mint 22 ISO
-        run: |
-          mkdir -p downloads
-          
-          # Use working UKFast mirror
-          ISO_URL="https://mirrors.ukfast.co.uk/sites/linuxmint.com/isos/stable/22.3/linuxmint-22.3-cinnamon-64bit.iso"
-          
-          echo "📥 Downloading Linux Mint 22.3 Cinnamon from UKFast mirror..."
-          wget -O downloads/linuxmint-22-64bit.iso "$ISO_URL" --progress=bar:force:noscroll --timeout=120
-          
-          echo "✅ Download complete"
-          ls -lh downloads/
+# Repack squashfs
+log_info "Repacking filesystem..."
+cd "${WORK_DIR}/iso-root/casper"
+sudo rm -f "$FSIMG"
 
-      - name: Build Arcanus OS ISO
-        run: |
-          chmod +x scripts/remaster-iso.sh
-          mkdir -p dist
-          
-          ISO_FILE=$(ls downloads/*.iso 2>/dev/null | head -1)
-          
-          if [ -z "$ISO_FILE" ]; then
-            echo "❌ No ISO file found in downloads/"
-            exit 1
-          fi
-          
-          echo "🔧 Remastering: $ISO_FILE"
-          sudo bash ./scripts/remaster-iso.sh "$ISO_FILE" dist/
+# Repack with proper exclusions
+if ! sudo mksquashfs "${WORK_DIR}/squashfs-root" "$FSIMG" \
+    -noappend \
+    -comp xz \
+    -b 1M \
+    -e proc sys dev run tmp 2>&1; then
+    log_err "Failed to repack filesystem"
+fi
+log_ok "Filesystem repacked"
 
-      - name: Verify ISO
-        run: |
-          echo "📋 Verifying output..."
-          ls -lh dist/
-          file dist/arcanus-os-demo.iso
+# Regenerate ISO
+log_info "Creating Arcanus OS ISO..."
+cd "${BUILD_DIR}"
 
-      - name: Upload ISO artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: arcanus-os-demo-iso
-          path: dist/arcanus-os-demo.iso
-          retention-days: 30
+# Use xorriso for more reliable ISO creation
+if xorriso \
+    -indev "${MINT_ISO}" \
+    -outdev "${OUTPUT_DIR}/arcanus-os-demo.iso" \
+    -boot_image any replay \
+    -volid "ARCANUS_OS" \
+    -update_r "${WORK_DIR}/iso-root" / \
+    -commit >/dev/null 2>&1; then
+    log_ok "ISO created (xorriso replay)"
+else
+    log_warn "xorriso replay failed, trying fallback..."
+    
+    # Fallback: use mkisofs
+    mkisofs -iso-level 3 \
+        -r -V "ARCANUS_OS" \
+        -cache-inodes -J -l \
+        -b isolinux/isolinux.bin \
+        -c isolinux/boot.cat \
+        -no-emul-boot \
+        -boot-load-size 4 \
+        -boot-info-table \
+        -o "${OUTPUT_DIR}/arcanus-os-demo.iso" \
+        "${WORK_DIR}/iso-root" >/dev/null 2>&1 || log_err "ISO creation failed"
+    log_ok "ISO created (mkisofs fallback)"
+fi
 
-      - name: Create release (on tag)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: dist/arcanus-os-demo.iso
-          body: |
-            # Arcanus OS ${{ github.ref_name }}
-            
-            **Linux Mint 22.3 Cinnamon** remastered with Arcanus branding.
-            
-            ## What's Included
-            - Full Linux Mint 22.3 functionality
-            - Arcanus visual branding (logo, wallpaper, icons)
-            - Pre-installed Arcanus Ledger
-            - Ready to test in VirtualBox/QEMU
-            
-            ## Quick Test
-            ```bash
-            qemu-system-x86_64 -cdrom arcanus-os-demo.iso -m 4G -smp 2
-            ```
-            
-            ## Build Info
-            - Built: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-            - Commit: ${{ github.sha }}
+# Results
+echo ""
+echo "╔════════════════════════════════════════╗"
+echo "║  ✅ Arcanus OS Build Complete!         ║"
+echo "╚════════════════════════════════════════╝"
+echo ""
+ls -lh "${OUTPUT_DIR}/arcanus-os-demo.iso"
+echo ""
+log_ok "Ready to test in VirtualBox/QEMU"

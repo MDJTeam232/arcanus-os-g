@@ -28,6 +28,7 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
+<<<<<<< HEAD
 # PHASE 1: Asset Staging
 log_info "Staging customization assets into Chroot environment..."
 
@@ -50,6 +51,22 @@ for dir in dev dev/pts proc sys run; do mount --bind /"$dir" "$SQUASH_EXTRACT/$d
 # Execute customization script
 chroot "$SQUASH_EXTRACT" /bin/bash /tmp/customize.sh || {
     log_error "Customization script failed."
+=======
+# PHASE 1: Asset Injection
+log_info "Synchronizing assets to image layers..."
+cp "${WORKSPACE}/branding/wallpaper.png" "${SQUASH_EXTRACT}/usr/share/backgrounds/arcanus/wallpaper.png"
+if [ -d "${WORKSPACE}/theme" ]; then
+    rsync -a "${WORKSPACE}/theme/" "${SQUASH_EXTRACT}/usr/share/themes/Arcanus/"
+fi
+
+# PHASE 2: Chroot Environment
+log_info "Entering Chroot..."
+for dir in dev dev/pts proc sys run; do mount --bind /"$dir" "$SQUASH_EXTRACT/$dir"; done
+
+# Execute customization script inside the jail
+chroot "$SQUASH_EXTRACT" /bin/bash /tmp/customize.sh || {
+    log_error "Customization failed."
+>>>>>>> d4d5fa72cc1ee86ad6066ca80aec090b3e4c5bc4
     for dir in run sys proc dev/pts dev; do umount "$SQUASH_EXTRACT/$dir"; done
     exit 1
 }
@@ -58,13 +75,21 @@ chroot "$SQUASH_EXTRACT" /bin/bash /tmp/customize.sh || {
 for dir in run sys proc dev/pts dev; do umount "$SQUASH_EXTRACT/$dir"; done
 
 # PHASE 3: SquashFS
+<<<<<<< HEAD
 log_info "Compressing SquashFS (XZ optimized)..."
+=======
+log_info "Compressing SquashFS..."
+>>>>>>> d4d5fa72cc1ee86ad6066ca80aec090b3e4c5bc4
 rm -f "${ISO_EXTRACT}/live/filesystem.squashfs"
 mksquashfs "$SQUASH_EXTRACT" "${ISO_EXTRACT}/live/filesystem.squashfs" \
     -comp xz -b 1M -noappend -e boot tmp
 
 # PHASE 4: ISO Compilation
+<<<<<<< HEAD
 log_info "Generating bootable ISO: ${ISO_NAME}"
+=======
+log_info "Generating ISO: ${ISO_NAME}"
+>>>>>>> d4d5fa72cc1ee86ad6066ca80aec090b3e4c5bc4
 xorriso -as mkisofs -r -V "ARCANUS_OS" \
     -o "${OUTPUT_DIR}/${ISO_NAME}" \
     -J -joliet-long \
@@ -73,4 +98,8 @@ xorriso -as mkisofs -r -V "ARCANUS_OS" \
     -no-emul-boot -boot-load-size 4 -boot-info-table \
     "$ISO_EXTRACT"
 
+<<<<<<< HEAD
 log_success "Artifact generated at: ${OUTPUT_DIR}/${ISO_NAME}"
+=======
+log_success "Artifact generated at: ${OUTPUT_DIR}/${ISO_NAME}"
+>>>>>>> d4d5fa72cc1ee86ad6066ca80aec090b3e4c5bc4

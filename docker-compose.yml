@@ -1,0 +1,55 @@
+version: '3.9'
+
+services:
+  # Production Linux build
+  build:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arcanus-ledger-linux-build
+    profiles:
+      - build
+
+  # Production runtime
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arcanus-ledger
+    ports:
+      - "8080:8080"
+    environment:
+      - GTK_DEBUG=""
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ~/.config/arcanus-ledger:/app/.config:rw
+    environment:
+      - DISPLAY=${DISPLAY}
+    restart: unless-stopped
+
+  # Development service with hot reload
+  dev:
+    image: ubuntu:jammy
+    container_name: arcanus-ledger-dev
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/.dart_tool
+      - /app/build
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    environment:
+      - DEBIAN_FRONTEND=noninteractive
+      - DISPLAY=${DISPLAY}
+    command: >
+      bash -c "
+      apt-get update &&
+      apt-get install -y ca-certificates curl git unzip xz-utils zip clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev &&
+      git clone --depth 1 https://github.com/flutter/flutter.git /root/flutter &&
+      export PATH=/root/flutter/bin:/root/flutter/bin/cache/dart-sdk/bin:\$PATH &&
+      flutter config --no-analytics --enable-linux-desktop &&
+      flutter precache &&
+      flutter pub get &&
+      flutter run -d linux
+      "
+    profiles:
+      - dev

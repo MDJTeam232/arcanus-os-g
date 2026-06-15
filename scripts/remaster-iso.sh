@@ -39,15 +39,14 @@ sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
 mkdir -p "${WORK_DIR}"/{mnt,extracted,squashfs-root}
 log_ok "Work directory ready"
 
-# Mount and extract ISO (use remount to make writable)
+# Mount and extract ISO
 log_info "Extracting Linux Mint ISO..."
 sudo mount -o loop,ro "${MINT_ISO}" "${WORK_DIR}/mnt" 2>/dev/null || log_err "Failed to mount ISO"
+log_ok "ISO mounted"
 
-# Use tar to extract instead of rsync to avoid permission issues
+# Copy ISO contents with rsync (simpler, more reliable)
 log_info "Copying ISO contents..."
-cd "${WORK_DIR}/mnt"
-sudo tar --exclude='*.squashfs' -cf - . | (cd "${WORK_DIR}/extracted" && sudo tar -xf -)
-cd - >/dev/null
+sudo rsync -a --exclude='*.squashfs' "${WORK_DIR}/mnt"/ "${WORK_DIR}/extracted/" >/dev/null 2>&1 || log_err "Failed to copy ISO"
 
 sudo umount "${WORK_DIR}/mnt"
 log_ok "ISO extracted"
@@ -55,7 +54,7 @@ log_ok "ISO extracted"
 # Extract squashfs
 log_info "Extracting filesystem..."
 cd "${WORK_DIR}/extracted/casper"
-sudo unsquashfs -d "${WORK_DIR}/squashfs-root" filesystem.squashfs 2>&1 | grep -v "Parallel unsquashfs" || true
+sudo unsquashfs -d "${WORK_DIR}/squashfs-root" filesystem.squashfs >/dev/null 2>&1 || log_err "Failed to extract filesystem"
 log_ok "Filesystem extracted"
 
 # Fix permissions on squashfs-root
@@ -129,10 +128,10 @@ fi
 log_ok "Branding applied"
 
 # Repack filesystem
-log_info "Repacking filesystem (this may take several minutes)..."
+log_info "Repacking filesystem (this may take 5-10 minutes)..."
 cd "${WORK_DIR}/extracted/casper"
 sudo rm -f filesystem.squashfs
-sudo mksquashfs "${WORK_DIR}/squashfs-root" filesystem.squashfs -comp xz -processors 1 2>&1 | tail -1 || true
+sudo mksquashfs "${WORK_DIR}/squashfs-root" filesystem.squashfs -comp xz -processors 1 >/dev/null 2>&1 || log_err "Failed to repack filesystem"
 log_ok "Filesystem repacked"
 
 # Build ISO
@@ -148,7 +147,7 @@ sudo mkisofs -iso-level 3 \
     -boot-load-size 4 \
     -boot-info-table \
     -o "${OUTPUT_DIR}/arcanus-os-demo.iso" \
-    "${WORK_DIR}/extracted" 2>&1 | grep -v "^  " || true
+    "${WORK_DIR}/extracted" >/dev/null 2>&1 || log_err "Failed to create ISO"
 
 log_ok "ISO created"
 

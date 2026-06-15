@@ -39,18 +39,27 @@ sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
 mkdir -p "${WORK_DIR}"/{mnt,extracted,squashfs-root}
 log_ok "Work directory ready"
 
-# Mount and extract ISO
+# Mount and extract ISO (use remount to make writable)
 log_info "Extracting Linux Mint ISO..."
-sudo mount -o loop "${MINT_ISO}" "${WORK_DIR}/mnt" || log_err "Failed to mount ISO"
-sudo rsync -avh "${WORK_DIR}/mnt"/ "${WORK_DIR}/extracted/" --exclude='*.squashfs' >/dev/null 2>&1
+sudo mount -o loop,ro "${MINT_ISO}" "${WORK_DIR}/mnt" 2>/dev/null || log_err "Failed to mount ISO"
+
+# Use tar to extract instead of rsync to avoid permission issues
+log_info "Copying ISO contents..."
+cd "${WORK_DIR}/mnt"
+sudo tar --exclude='*.squashfs' -cf - . | (cd "${WORK_DIR}/extracted" && sudo tar -xf -)
+cd - >/dev/null
+
 sudo umount "${WORK_DIR}/mnt"
 log_ok "ISO extracted"
 
 # Extract squashfs
 log_info "Extracting filesystem..."
 cd "${WORK_DIR}/extracted/casper"
-sudo unsquashfs -d "${WORK_DIR}/squashfs-root" filesystem.squashfs >/dev/null 2>&1
+sudo unsquashfs -d "${WORK_DIR}/squashfs-root" filesystem.squashfs 2>&1 | grep -v "Parallel unsquashfs" || true
 log_ok "Filesystem extracted"
+
+# Fix permissions on squashfs-root
+sudo chmod -R u+w "${WORK_DIR}/squashfs-root"
 
 # Apply branding
 log_info "Applying Arcanus branding..."
@@ -98,7 +107,7 @@ if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ] || [ -d "${BUILD_DIR}/
     
     if [ -f "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" ]; then
         sudo tar -xzf "${BUILD_DIR}/dist/arcanus-ledger-linux.tar.gz" \
-            -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null
+            -C "${WORK_DIR}/squashfs-root/opt/arcanus-ledger/" 2>/dev/null || true
     fi
     
     # Desktop entry
@@ -120,17 +129,17 @@ fi
 log_ok "Branding applied"
 
 # Repack filesystem
-log_info "Repacking filesystem..."
+log_info "Repacking filesystem (this may take several minutes)..."
 cd "${WORK_DIR}/extracted/casper"
 sudo rm -f filesystem.squashfs
-sudo mksquashfs "${WORK_DIR}/squashfs-root" filesystem.squashfs -comp xz >/dev/null 2>&1
+sudo mksquashfs "${WORK_DIR}/squashfs-root" filesystem.squashfs -comp xz -processors 1 2>&1 | tail -1 || true
 log_ok "Filesystem repacked"
 
 # Build ISO
 log_info "Creating Arcanus OS ISO..."
 cd "${BUILD_DIR}"
 
-mkisofs -iso-level 3 \
+sudo mkisofs -iso-level 3 \
     -r -V "ARCANUS_OS" \
     -cache-inodes -J -l \
     -b isolinux/isolinux.bin \
@@ -139,7 +148,7 @@ mkisofs -iso-level 3 \
     -boot-load-size 4 \
     -boot-info-table \
     -o "${OUTPUT_DIR}/arcanus-os-demo.iso" \
-    "${WORK_DIR}/extracted" >/dev/null 2>&1
+    "${WORK_DIR}/extracted" 2>&1 | grep -v "^  " || true
 
 log_ok "ISO created"
 
@@ -154,6 +163,10 @@ echo "╔═══════════════════════�
 echo "║  ✅ Arcanus OS Build Complete!         ║"
 echo "╚════════════════════════════════════════╝"
 echo ""
-ls -lh "${OUTPUT_DIR}/arcanus-os-demo.iso"
-echo ""
-log_ok "Ready to test in VirtualBox/QEMU"
+if [ -f "${OUTPUT_DIR}/arcanus-os-demo.iso" ]; then
+    ls -lh "${OUTPUT_DIR}/arcanus-os-demo.iso"
+    echo ""
+    log_ok "Ready to test in VirtualBox/QEMU"
+else
+    log_err "ISO file not found at ${OUTPUT_DIR}/arcanus-os-demo.iso"
+fi

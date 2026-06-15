@@ -5,11 +5,18 @@
 
 set -euo pipefail
 
-MINT_ISO="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
-OUTPUT_DIR="$(cd "$(dirname "$2")" && pwd)"
+MINT_ISO="${1:?Missing ISO path}"
+OUTPUT_DIR="${2:-.dist}"
+
+# Resolve BUILD_DIR absolutely
 BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${BUILD_DIR}/.work"
 BRANDING_DIR="${BUILD_DIR}/branding"
+
+# Make OUTPUT_DIR absolute
+if [[ "${OUTPUT_DIR}" != /* ]]; then
+    OUTPUT_DIR="${BUILD_DIR}/${OUTPUT_DIR#./}"
+fi
 
 # Color output
 RED='\033[0;31m'
